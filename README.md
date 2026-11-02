@@ -46,8 +46,18 @@ It asks whether you're checking one domain or multiple:
 - **Multiple domains** — give the path to a file with one domain per line.
   Blank lines and `#` comments are skipped, duplicates are removed.
 
-It then asks for an output file, runs `gau` on the domain(s), and writes the
-`gf xss | uro` filtered result to `<output>_xss.txt`.
+It then asks for an output file, runs `gau` on the domain(s), and writes two
+filtered results:
+
+- `<output>_xss.txt` — `gf xss | uro`: only URLs whose parameter *names* are
+  on `gf`'s curated XSS-prone list (`q`, `search`, `redirect`, `url`,
+  `callback`, `token`, ...). High precision, but misses a site's own
+  parameter names that aren't on that list (e.g. a video site's `v=`).
+- `<output>_params.txt` — every URL with *any* query parameter (named or an
+  empty-key cache-buster like `?=173812730`), deduped with `uro`. Broader
+  net, more noise - meant for manual or semi-automated triage (e.g. piping
+  into `kxss` or `dalfox` to check which ones actually reflect) rather than
+  a finished vulnerability list.
 
 ## Scope and authorization
 

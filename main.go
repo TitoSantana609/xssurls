@@ -173,6 +173,61 @@ func filterXSS(inPath, outPath string) error {
 	return nil
 }
 
+// hasQueryParam reports whether a URL line carries a query string with at
+// least one "=" after the "?" - a named parameter (v=1) or an empty-name
+// cache-buster (?=173812730) alike.
+func hasQueryParam(line string) bool {
+	i := strings.Index(line, "?")
+	if i == -1 {
+		return false
+	}
+	return strings.Contains(line[i:], "=")
+}
+
+// filterParams keeps every URL with a query parameter, not just the ones
+// matching gf's curated xss.json parameter names, and dedupes with uro.
+// It's a broader net than filterXSS: use it when a site's own parameter
+// names (v=, ref=, ...) aren't on gf's list but are still worth checking
+// by hand for reflection.
+func filterParams(inPath, outPath string) error {
+	in, err := os.Open(inPath)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	pr, pw := io.Pipe()
+	uro := exec.Command("uro")
+	uro.Stdin = pr
+	uro.Stdout = io.MultiWriter(out, os.Stdout)
+	uro.Stderr = os.Stderr
+
+	if err := uro.Start(); err != nil {
+		return fmt.Errorf("uro: %w", err)
+	}
+
+	go func() {
+		sc := bufio.NewScanner(in)
+		for sc.Scan() {
+			if line := sc.Text(); hasQueryParam(line) {
+				fmt.Fprintln(pw, line)
+			}
+		}
+		pw.Close()
+	}()
+
+	if err := uro.Wait(); err != nil {
+		return fmt.Errorf("uro: %w", err)
+	}
+	return nil
+}
+
 func die(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", a...)
 	os.Exit(1)
@@ -221,6 +276,7 @@ func main() {
 		outPath = defOut
 	}
 	xssPath := strings.TrimSuffix(outPath, ".txt") + "_xss.txt"
+	paramsPath := strings.TrimSuffix(outPath, ".txt") + "_params.txt"
 
 	fmt.Println("\nRunning gau...")
 	results := fetchAll(domains, *workers)
@@ -243,9 +299,15 @@ func main() {
 		die("gau returned no URLs; nothing to filter")
 	}
 
-	fmt.Println("\nFiltering for XSS candidates...")
+	fmt.Println("\nFiltering for XSS candidates (gf's curated parameter names)...")
 	if err := filterXSS(outPath, xssPath); err != nil {
 		die("%v", err)
 	}
 	fmt.Printf("\nFiltered XSS candidates saved to %s\n", xssPath)
+
+	fmt.Println("\nCollecting every URL with any query parameter (broader net, for manual triage)...")
+	if err := filterParams(outPath, paramsPath); err != nil {
+		die("%v", err)
+	}
+	fmt.Printf("\nAll parameterized URLs saved to %s\n", paramsPath)
 }
